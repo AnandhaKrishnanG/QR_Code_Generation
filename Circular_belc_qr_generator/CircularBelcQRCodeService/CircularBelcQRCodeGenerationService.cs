@@ -1,5 +1,6 @@
 ﻿using Net.Codecrete.QrCodeGenerator;
 using SkiaSharp;
+using System.Collections.Generic;
 using System.Text;
 using System.Xml;
 
@@ -82,11 +83,37 @@ namespace Circular_belc_qr_generator.Circular_belc_qr_service
                 logoPath: resolvedLogoPath
             );
 
+            // Calculate aspect ratio for proper resizing
+            double aspectRatio = (double)baseBitmap.Height / baseBitmap.Width;
+            
+            // Parse SVG to get its aspect ratio (SVG uses module units, not pixels)
+            double svgAspectRatio = aspectRatio; // Default to bitmap aspect ratio
+            try
+            {
+                XmlDocument svgDoc = new XmlDocument();
+                svgDoc.LoadXml(originalSvgContent);
+                XmlElement? svgRoot = svgDoc.DocumentElement;
+                if (svgRoot != null)
+                {
+                    if (double.TryParse(svgRoot.GetAttribute("width"), out double svgWidth) &&
+                        double.TryParse(svgRoot.GetAttribute("height"), out double svgHeight) &&
+                        svgWidth > 0)
+                    {
+                        svgAspectRatio = svgHeight / svgWidth;
+                    }
+                }
+            }
+            catch
+            {
+                // Use bitmap aspect ratio as fallback
+            }
+            
             // jpeg image
             Console.WriteLine("Generated JPEG files:");
             foreach (int resolution in RESOLUTIONS)
             {
-                using SKBitmap resizedImage = ResizeBitmap(baseBitmap, resolution, resolution);
+                int height = (int)(resolution * aspectRatio);
+                using SKBitmap resizedImage = ResizeBitmap(baseBitmap, resolution, height);
                 string fileName = BuildQrCodeName(configuration.QrId, resolution, "jpeg");
                 string filePath = Path.Combine(baseOutputPath, "jpeg", fileName);
 
@@ -100,7 +127,8 @@ namespace Circular_belc_qr_generator.Circular_belc_qr_service
             Console.WriteLine("\nGenerated PNG files:");
             foreach (int resolution in RESOLUTIONS)
             {
-                using SKBitmap resizedImage = ResizeBitmap(baseBitmap, resolution, resolution);
+                int height = (int)(resolution * aspectRatio);
+                using SKBitmap resizedImage = ResizeBitmap(baseBitmap, resolution, height);
                 string fileName = BuildQrCodeName(configuration.QrId, resolution, "png");
                 string filePath = Path.Combine(baseOutputPath, "png", fileName);
 
@@ -114,7 +142,9 @@ namespace Circular_belc_qr_generator.Circular_belc_qr_service
             Console.WriteLine("\nGenerated SVG files:");
             foreach (int resolution in RESOLUTIONS)
             {
-                string resizedSvg = ResizeSVG(originalSvgContent, resolution, resolution);
+                // SVG dimensions are in pixels when rendered, so use the same aspect ratio
+                int height = (int)(resolution * svgAspectRatio);
+                string resizedSvg = ResizeSVG(originalSvgContent, resolution, height);
                 string fileName = BuildQrCodeName(configuration.QrId, resolution, "svg");
                 string filePath = Path.Combine(baseOutputPath, "svg", fileName);
 
@@ -150,7 +180,14 @@ namespace Circular_belc_qr_generator.Circular_belc_qr_service
             // 2. Create bitmap with SkiaSharp (matching reference structure)
             int totalSize = size + 2 * BORDER_MODULES;
             int pixelSize = totalSize * pixelsPerModule;
-            var bitmap = new SKBitmap(pixelSize, pixelSize, SKColorType.Rgba8888, SKAlphaType.Premul);
+            
+            // Calculate text height and padding (increased for better readability)
+            // Increased to accommodate larger font size for better readability at 240p
+            int textPadding = pixelsPerModule * 3; // Padding between QR and text
+            int textHeight = pixelsPerModule * 7; // Height for text (increased from 6 to 7 for larger font)
+            int totalHeight = pixelSize + textPadding + textHeight;
+            
+            var bitmap = new SKBitmap(pixelSize, totalHeight, SKColorType.Rgba8888, SKAlphaType.Premul);
             using var canvas = new SKCanvas(bitmap);
             canvas.Clear(SKColors.White);
 
@@ -204,6 +241,9 @@ namespace Circular_belc_qr_generator.Circular_belc_qr_service
             {
                 DrawCenterLogo(canvas, pixelSize, logoPath);
             }
+
+            // 6. Draw URL text below the QR code
+            DrawUrlText(canvas, content, pixelSize, totalHeight, textPadding, pixelsPerModule);
 
             return bitmap;
         }
@@ -284,6 +324,150 @@ namespace Circular_belc_qr_generator.Circular_belc_qr_service
         }
 
         /// <summary>
+        /// Draws the URL text below the QR code with improved readability
+        /// </summary>
+        private void DrawUrlText(SKCanvas canvas, string url, int qrSize, int totalHeight, int textPadding, int pixelsPerModule)
+        {
+            if (string.IsNullOrEmpty(url)) return;
+
+            // Calculate text size based on QR code size (larger for better readability)
+            // Use a larger multiplier and higher minimum to ensure readability when scaled to 240p
+            // Base size is typically 30 pixels per module, so we want font that scales well
+            // When scaled to 240p (scale factor ~0.24-0.27), we need base font of ~30-35px to get ~8-9px at 240p
+            float fontSize = pixelsPerModule * 2.0f; // Increased to 2.0f for better scaling
+            fontSize = Math.Max(30, Math.Min(fontSize, 60)); // Increased minimum to 30px, max to 60px for better readability
+
+            using var textPaint = new SKPaint
+            {
+                Color = SKColors.Black,
+                TextSize = fontSize,
+                IsAntialias = true,
+                TextAlign = SKTextAlign.Center,
+                Typeface = SKTypeface.FromFamilyName("Arial", SKFontStyle.Bold), // Use bold for better readability
+                SubpixelText = true // Better text rendering
+            };
+
+            // Measure text to handle long URLs
+            float textWidth = textPaint.MeasureText(url);
+            float maxWidth = qrSize * 0.9f; // Use 90% of QR width with some margin
+
+            // Calculate text area dimensions
+            float lineHeight = fontSize * 1.4f;
+            float textAreaTop = qrSize + textPadding;
+            float textAreaBottom = totalHeight;
+            float textAreaHeight = textAreaBottom - textAreaTop;
+            float textX = qrSize / 2f;
+
+            // Draw white background rectangle for better contrast
+            using var bgPaint = new SKPaint
+            {
+                Color = SKColors.White,
+                IsAntialias = true,
+                Style = SKPaintStyle.Fill
+            };
+            float bgPadding = pixelsPerModule * 0.5f;
+            canvas.DrawRect(new SKRect(
+                qrSize * 0.05f, 
+                textAreaTop - bgPadding, 
+                qrSize * 0.95f, 
+                textAreaBottom - bgPadding), 
+                bgPaint);
+
+            // If text is too long, wrap to multiple lines
+            if (textWidth > maxWidth)
+            {
+                // Break URL into parts for better wrapping, preserving separators
+                List<string> lines = new List<string>();
+                
+                // Use a smarter approach: split by "/" but keep track of separators
+                // First, handle the protocol part (e.g., "https://")
+                string currentLine = "";
+                int protocolIndex = url.IndexOf("://");
+                
+                if (protocolIndex > 0)
+                {
+                    // Add protocol and domain together
+                    int nextSlash = url.IndexOf('/', protocolIndex + 3);
+                    if (nextSlash < 0)
+                    {
+                        // No path after domain
+                        currentLine = url;
+                    }
+                    else
+                    {
+                        // Get protocol + domain (e.g., "https://www.belc.com")
+                        currentLine = url.Substring(0, nextSlash);
+                        string remaining = url.Substring(nextSlash + 1); // Get path after the first "/"
+                        
+                        // Now process the path parts, preserving "/" separators
+                        string[] pathParts = remaining.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+                        
+                        foreach (string part in pathParts)
+                        {
+                            string testLine = currentLine + "/" + part;
+                            float testWidth = textPaint.MeasureText(testLine);
+                            
+                            if (testWidth > maxWidth && !string.IsNullOrEmpty(currentLine))
+                            {
+                                lines.Add(currentLine);
+                                // Start new line with "/" prefix to preserve the separator
+                                currentLine = "/" + part;
+                            }
+                            else
+                            {
+                                currentLine = testLine;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    // No protocol, just split by "/" and preserve separators
+                    string[] parts = url.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+                    bool isFirst = true;
+                    
+                    foreach (string part in parts)
+                    {
+                        string testLine = isFirst ? part : currentLine + "/" + part;
+                        float testWidth = textPaint.MeasureText(testLine);
+                        
+                        if (testWidth > maxWidth && !string.IsNullOrEmpty(currentLine))
+                        {
+                            lines.Add(currentLine);
+                            currentLine = part;
+                        }
+                        else
+                        {
+                            currentLine = testLine;
+                        }
+                        isFirst = false;
+                    }
+                }
+                
+                if (!string.IsNullOrEmpty(currentLine))
+                {
+                    lines.Add(currentLine);
+                }
+
+                // Draw all lines, centered vertically in the text area
+                float totalTextHeight = lines.Count * lineHeight;
+                float startY = textAreaTop + (textAreaHeight - totalTextHeight) / 2f + fontSize;
+                
+                foreach (string line in lines)
+                {
+                    canvas.DrawText(line, textX, startY, textPaint);
+                    startY += lineHeight;
+                }
+            }
+            else
+            {
+                // Text fits on one line - center it vertically
+                float textY = textAreaTop + (textAreaHeight / 2f) + (fontSize / 3f);
+                canvas.DrawText(url, textX, textY, textPaint);
+            }
+        }
+
+        /// <summary>
         /// Generate circular QR code as SVG XML
         /// </summary>
         private string GenerateCircularQRCodeAsSvg(
@@ -305,6 +489,11 @@ namespace Circular_belc_qr_generator.Circular_belc_qr_service
 
             // 2. Calculate dimensions (in module units for SVG)
             int totalSize = size + 2 * BORDER_MODULES;
+            
+            // Calculate text height and padding (convert pixels to module units) - increased for better readability
+            double textPadding = 3.0; // Padding between QR and text in module units
+            double textHeight = 6.0; // Height for text in module units (allows for larger font and multiple lines)
+            double totalHeight = totalSize + textPadding + textHeight;
 
             // 3. Get colors
             string moduleColorHex = ColorToHex(moduleColor);
@@ -312,8 +501,8 @@ namespace Circular_belc_qr_generator.Circular_belc_qr_service
 
             // 4. Build SVG in module coordinates for better scalability
             var svg = new StringBuilder();
-            svg.Append($"<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"{totalSize}\" height=\"{totalSize}\" viewBox=\"0 0 {totalSize} {totalSize}\">");
-            svg.Append($"<rect width=\"{totalSize}\" height=\"{totalSize}\" fill=\"white\"/>");
+            svg.Append($"<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"{totalSize}\" height=\"{totalHeight}\" viewBox=\"0 0 {totalSize} {totalHeight}\">");
+            svg.Append($"<rect width=\"{totalSize}\" height=\"{totalHeight}\" fill=\"white\"/>");
 
             int seed = batchSeed ?? 0;
             double baseFactor = Math.Clamp(dotSizeFactor, 0.65, 0.82);
@@ -368,6 +557,9 @@ namespace Circular_belc_qr_generator.Circular_belc_qr_service
                 }
             }
 
+            // 8. Draw URL text below the QR code
+            DrawUrlTextSvg(svg, content, totalSize, totalHeight, textPadding);
+
             svg.Append("</svg>");
             return svg.ToString();
         }
@@ -398,6 +590,133 @@ namespace Circular_belc_qr_generator.Circular_belc_qr_service
 
             // Innermost: 3x3 rounded rectangle (the pupil/center)
             svg.Append($"<rect x=\"{left + pupilInset}\" y=\"{top + pupilInset}\" width=\"{pupilSize}\" height=\"{pupilSize}\" rx=\"{pupilRadius}\" ry=\"{pupilRadius}\" fill=\"{eyeFrameColor}\"/>");
+        }
+
+        /// <summary>
+        /// Draws the URL text below the QR code in SVG with improved readability
+        /// </summary>
+        private void DrawUrlTextSvg(StringBuilder svg, string url, double qrSize, double totalHeight, double textPadding)
+        {
+            if (string.IsNullOrEmpty(url)) return;
+
+            // Escape XML special characters
+            string escapedUrl = url.Replace("&", "&amp;")
+                                   .Replace("<", "&lt;")
+                                   .Replace(">", "&gt;")
+                                   .Replace("\"", "&quot;")
+                                   .Replace("'", "&apos;");
+
+            // Calculate font size (in module units, will scale with viewBox) - larger for better readability
+            double fontSize = 1.2;
+            double lineHeight = fontSize * 1.4;
+            
+            // Calculate text area
+            double textAreaTop = qrSize + textPadding;
+            double textAreaHeight = totalHeight - textAreaTop;
+            double textX = qrSize / 2.0;
+
+            // Draw white background rectangle for better contrast
+            double bgPadding = 0.5;
+            svg.Append($"<rect x=\"{qrSize * 0.05:F2}\" y=\"{textAreaTop - bgPadding:F2}\" width=\"{qrSize * 0.9:F2}\" height=\"{textAreaHeight:F2}\" fill=\"white\" rx=\"0.3\" ry=\"0.3\"/>");
+
+            // Measure text width to determine if wrapping is needed
+            // For SVG, we'll use a simple approach: if URL is very long, break it
+            double maxWidth = qrSize * 0.85;
+            int estimatedCharsPerLine = (int)(maxWidth / (fontSize * 0.6)); // Rough estimate
+            
+            if (url.Length > estimatedCharsPerLine)
+            {
+                // Break into multiple lines, preserving separators
+                List<string> lines = new List<string>();
+                
+                // Use the same smart approach as bitmap version
+                string currentLine = "";
+                int protocolIndex = url.IndexOf("://");
+                
+                if (protocolIndex > 0)
+                {
+                    // Add protocol and domain together
+                    int nextSlash = url.IndexOf('/', protocolIndex + 3);
+                    if (nextSlash < 0)
+                    {
+                        // No path after domain
+                        currentLine = url;
+                    }
+                    else
+                    {
+                        // Get protocol + domain (e.g., "https://www.belc.com")
+                        currentLine = url.Substring(0, nextSlash);
+                        string remaining = url.Substring(nextSlash + 1); // Get path after the first "/"
+                        
+                        // Now process the path parts, preserving "/" separators
+                        string[] pathParts = remaining.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+                        
+                        foreach (string part in pathParts)
+                        {
+                            string testLine = currentLine + "/" + part;
+                            
+                            if (testLine.Length > estimatedCharsPerLine && !string.IsNullOrEmpty(currentLine))
+                            {
+                                lines.Add(currentLine);
+                                // Start new line with "/" prefix to preserve the separator
+                                currentLine = "/" + part;
+                            }
+                            else
+                            {
+                                currentLine = testLine;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    // No protocol, just split by "/" and preserve separators
+                    string[] parts = url.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+                    bool isFirst = true;
+                    
+                    foreach (string part in parts)
+                    {
+                        string testLine = isFirst ? part : currentLine + "/" + part;
+                        
+                        if (testLine.Length > estimatedCharsPerLine && !string.IsNullOrEmpty(currentLine))
+                        {
+                            lines.Add(currentLine);
+                            currentLine = part;
+                        }
+                        else
+                        {
+                            currentLine = testLine;
+                        }
+                        isFirst = false;
+                    }
+                }
+                
+                if (!string.IsNullOrEmpty(currentLine))
+                {
+                    lines.Add(currentLine);
+                }
+
+                // Draw all lines, centered vertically
+                double totalTextHeight = lines.Count * lineHeight;
+                double startY = textAreaTop + (textAreaHeight - totalTextHeight) / 2.0 + fontSize;
+                
+                foreach (string line in lines)
+                {
+                    string escapedLine = line.Replace("&", "&amp;")
+                                             .Replace("<", "&lt;")
+                                             .Replace(">", "&gt;")
+                                             .Replace("\"", "&quot;")
+                                             .Replace("'", "&apos;");
+                    svg.Append($"<text x=\"{textX:F2}\" y=\"{startY:F2}\" font-family=\"Arial, sans-serif\" font-size=\"{fontSize:F2}\" font-weight=\"bold\" fill=\"black\" text-anchor=\"middle\">{escapedLine}</text>");
+                    startY += lineHeight;
+                }
+            }
+            else
+            {
+                // Text fits on one line - center it vertically
+                double textY = textAreaTop + (textAreaHeight / 2.0) + (fontSize / 3.0);
+                svg.Append($"<text x=\"{textX:F2}\" y=\"{textY:F2}\" font-family=\"Arial, sans-serif\" font-size=\"{fontSize:F2}\" font-weight=\"bold\" fill=\"black\" text-anchor=\"middle\">{escapedUrl}</text>");
+            }
         }
 
         private string? GetImageDataUri(string imagePath)

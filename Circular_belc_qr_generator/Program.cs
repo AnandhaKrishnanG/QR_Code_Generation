@@ -12,7 +12,7 @@ var configuration = new CircularQRCodeDto
 {
     DepartmentId = "dept1",
     QrId = "cqr123",
-    ShortUrl = "https://www.belc.com/circular/123",
+    ShortUrl = "https://www.belc.com/qwertyuiopasdfghjklzxcvbnmqwerty",
     Title = "Demo circular QR",
     Active = true,
     CreatedAt = DateTime.Now,
