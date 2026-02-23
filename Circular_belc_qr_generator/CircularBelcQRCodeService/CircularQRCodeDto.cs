@@ -17,7 +17,6 @@ namespace Circular_belc_qr_generator.Circular_belc_qr_service
         // QR Code Generation Properties
         public string ModuleColor { get; set; } = "blue";
         public string EyeFrameColor { get; set; } = "red";
-        public string? EyeFrameLetter { get; set; }
         public int PixelsPerModule { get; set; } = BASE_PIXELS_PER_MODULE;
         public double DotSizeFactor { get; set; } = 0.75;
         public double DotSizeVariance { get; set; } = 0;

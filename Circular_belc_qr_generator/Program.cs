@@ -22,7 +22,6 @@ var configuration = new CircularQRCodeDto
     // QR Code Generation Properties - matching reference image style
     ModuleColor = "black",
     EyeFrameColor = "black",
-    EyeFrameLetter = "",          // No letter in finder patterns
     PixelsPerModule = CircularQRCodeDto.BASE_PIXELS_PER_MODULE,
     DotSizeFactor = 0.7,          // Circular dot size (like reference)
     DotSizeVariance = 0,
